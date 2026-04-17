@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package image;
+
+import "chat.proto";
+
+// ============================================================
+// Image Matching Service gRPC Definition
+// Chat Service → Image Service 간 통신
+// 판단 근거: 채팅 응답과 이미지가 동시에 나와야 함 → 100ms 이내 매칭 필수
+// ============================================================
+
+service ImageMatchingService {
+  // 감정 태그 기반 이미지 에셋 매칭
+  rpc MatchImage (MatchImageRequest) returns (MatchImageResponse);
+
+  // 캐릭터별 에셋 목록 조회 (관리용)
+  rpc GetCharacterAssets (GetAssetsRequest) returns (AssetListResponse);
+}
+
+message MatchImageRequest {
+  string character_id = 1;
+  chat.EmotionTag emotion = 2;
+  // 컨텍스트 힌트 (행동 키워드: "웃는", "손흔드는" 등)
+  repeated string action_hints = 3;
+  // 최근 N개 이미지 ID — 중복 방지용
+  repeated string recent_asset_ids = 4;
+}
+
+message MatchImageResponse {
+  string asset_id = 1;
+  string cdn_url = 2;
+  string asset_type = 3;     // "image" | "gif" | "animation"
+  chat.EmotionTag emotion = 4;
+  // 매칭 신뢰도 (0.0 ~ 1.0)
+  float confidence = 5;
+}
+
+message GetAssetsRequest {
+  string character_id = 1;
+  chat.EmotionTag emotion_filter = 2;
+  int32 limit = 3;
+}
+
+message AssetListResponse {
+  repeated AssetInfo assets = 1;
+  int32 total_count = 2;
+}
+
+message AssetInfo {
+  string asset_id = 1;
+  string cdn_url = 2;
+  string asset_type = 3;
+  chat.EmotionTag emotion = 4;
+  repeated string action_tags = 5;
+}

@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+package chat;
+
+// ============================================================
+// Chat Service gRPC Definition
+// API Gateway → Chat Service 간 실시간 통신용
+// 판단 근거: 채팅 응답 지연 30ms 이내 유지 필요 → REST 대비 gRPC가 유리
+// ============================================================
+
+service ChatService {
+  // 단일 메시지 전송 + AI 응답 수신
+  rpc SendMessage (SendMessageRequest) returns (ChatResponse);
+
+  // 스트리밍 응답 (SSE 대체 — 서버→클라이언트 청크 전송)
+  rpc SendMessageStream (SendMessageRequest) returns (stream ChatStreamChunk);
+
+  // 대화 히스토리 조회
+  rpc GetHistory (GetHistoryRequest) returns (ChatHistoryResponse);
+
+  // 세션 생성/복귀
+  rpc CreateSession (CreateSessionRequest) returns (SessionResponse);
+}
+
+message SendMessageRequest {
+  string session_id = 1;
+  string user_id = 2;
+  string character_id = 3;
+  string message = 4;
+  // 클라이언트 타임스탬프 — 지연 측정용
+  int64 client_timestamp = 5;
+}
+
+message ChatResponse {
+  string message_id = 1;
+  string content = 2;
+  // 감정 분석 결과 — 이미지 매칭 서비스로 전달
+  EmotionTag emotion = 3;
+  int64 server_timestamp = 4;
+  TokenUsage token_usage = 5;
+}
+
+message ChatStreamChunk {
+  string chunk_id = 1;
+  string content = 2;
+  bool is_final = 3;
+  // 최종 청크에만 포함
+  EmotionTag emotion = 4;
+  TokenUsage token_usage = 5;
+}
+
+message GetHistoryRequest {
+  string session_id = 1;
+  string user_id = 2;
+  int32 limit = 3;       // 최근 N개 메시지
+  string cursor = 4;     // 페이지네이션 커서
+}
+
+message ChatHistoryResponse {
+  repeated ChatMessage messages = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message ChatMessage {
+  string message_id = 1;
+  string role = 2;       // "user" | "assistant"
+  string content = 3;
+  EmotionTag emotion = 4;
+  int64 timestamp = 5;
+}
+
+message CreateSessionRequest {
+  string user_id = 1;
+  string character_id = 2;
+}
+
+message SessionResponse {
+  string session_id = 1;
+  string character_id = 2;
+  // 이전 대화 요약 (컨텍스트 복원용)
+  string context_summary = 3;
+  int64 created_at = 4;
+}
+
+message TokenUsage {
+  int32 prompt_tokens = 1;
+  int32 completion_tokens = 2;
+  int32 total_tokens = 3;
+}
+
+// ============================================================
+// 감정 태그 — 이미지 매칭 서비스와 공유하는 핵심 enum
+// Replika 모델 참고: 6개 기본 카테고리 + 확장
+// ============================================================
+enum EmotionTag {
+  NEUTRAL = 0;
+  JOY = 1;
+  SADNESS = 2;
+  ANGER = 3;
+  SURPRISE = 4;
+  AFFECTION = 5;
+  FEAR = 6;
+  DISGUST = 7;
+  EXCITEMENT = 8;
+  SHY = 9;
+}
