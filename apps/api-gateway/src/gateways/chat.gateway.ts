@@ -119,6 +119,23 @@ export class ChatGateway implements OnModuleInit, OnGatewayConnection, OnGateway
    * 3. 감정 태그로 Image Service에 이미지 매칭 요청 (병렬)
    * 4. 텍스트 + 이미지를 클라이언트에 push
    */
+  @SubscribeMessage('get_subscription')
+  async handleGetSubscription(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { userId: string },
+  ) {
+    try {
+      // Phase 1: 클라이언트에 구독 정보 반환
+      client.emit('subscription_info', {
+        userId: data.userId,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      this.logger.error(`Subscription fetch failed: ${error.message}`);
+      client.emit('error', { code: 'SUBSCRIPTION_FAILED', message: error.message });
+    }
+  }
+
   @SubscribeMessage('send_message')
   async handleMessage(
     @ConnectedSocket() client: Socket,
@@ -133,6 +150,15 @@ export class ChatGateway implements OnModuleInit, OnGatewayConnection, OnGateway
     const startTime = Date.now();
 
     try {
+      // ============================================================
+      // 수익화 게이트: 사용량 체크 (LLM 호출 전)
+      // ============================================================
+      // Phase 2에서 SubscriptionService를 gRPC로 호출
+      // Phase 1: 클라이언트 측에서 체크 (서버는 이벤트만 발행)
+      client.emit('usage_check', {
+        userId: userInfo.userId,
+        timestamp: Date.now(),
+      });
       // ============================================================
       // Phase 1: 텍스트 응답 (스트리밍)
       // 라이브 스트리밍 경험 적용 — 청크 단위 전송
@@ -190,6 +216,23 @@ export class ChatGateway implements OnModuleInit, OnGatewayConnection, OnGateway
             this.logger.warn(`Image matching failed: ${imgErr.message}`);
           }
 
+          // ============================================================
+          // Phase 3: 호감도 업데이트 이벤트 (텍스트 + 이미지 후)
+          // ============================================================
+          client.emit('affinity_update', {
+            emotion: finalEmotion,
+            timestamp: Date.now(),
+          });
+
+          // ============================================================
+          // Phase 4: 스토리 선택지 (3턴마다 등장)
+          // ============================================================
+          client.emit('story_choices', {
+            sessionId: userInfo.sessionId,
+            emotion: finalEmotion,
+            timestamp: Date.now(),
+          });
+
           const latencyMs = Date.now() - startTime;
           this.logger.log(`Message processed in ${latencyMs}ms`);
         },
@@ -197,6 +240,147 @@ export class ChatGateway implements OnModuleInit, OnGatewayConnection, OnGateway
     } catch (error) {
       this.logger.error(`Message send failed: ${error.message}`, error.stack);
       client.emit('error', { code: 'SEND_FAILED', message: error.message });
+    }
+  }
+
+  /**
+   * 호감도 조회
+   */
+  @SubscribeMessage('get_affinity')
+  async handleGetAffinity(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { userId: string; characterId: string },
+  ) {
+    try {
+      // Phase 1: 클라이언트에 현재 호감도 반환
+      // 실제 DB 조회는 chat-service에서 gRPC로 수행
+      client.emit('affinity_data', {
+        userId: data.userId,
+        characterId: data.characterId,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      this.logger.error(`Affinity fetch failed: ${error.message}`);
+      client.emit('error', { code: 'AFFINITY_FAILED', message: error.message });
+    }
+  }
+
+  /**
+   * 스토리 선택지 선택 처리
+   *
+   * 유저가 선택지를 클릭 → 선택 결과를 다음 대화에 반영
+   */
+  @SubscribeMessage('select_choice')
+  async handleSelectChoice(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { choiceId: string; choiceText: string },
+  ) {
+    const userInfo = this.connectedUsers.get(client.id);
+    if (!userInfo) {
+      client.emit('error', { code: 'NOT_IN_SESSION', message: 'Join a session first' });
+      return;
+    }
+
+    try {
+      // 선택지 텍스트를 유저 메시지처럼 처리 → AI가 반응
+      this.logger.log(`Choice selected: ${data.choiceId} → "${data.choiceText}"`);
+
+      client.emit('choice_accepted', {
+        choiceId: data.choiceId,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      this.logger.error(`Choice processing failed: ${error.message}`);
+      client.emit('error', { code: 'CHOICE_FAILED', message: error.message });
+    }
+  }
+
+  // ============================================================
+  // 리텐션: 출석 체크 + 일일 미션
+  // ============================================================
+
+  /**
+   * 출석 체크
+   * 호출 시점: 클라이언트 앱 진입 시 (세션 시작 전)
+   */
+  @SubscribeMessage('check_in')
+  async handleCheckIn(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { userId: string },
+  ) {
+    try {
+      // Phase 1: 클라이언트에 출석 결과 반환
+      // Phase 2: RetentionService.checkIn() gRPC 호출
+      client.emit('check_in_result', {
+        userId: data.userId,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      this.logger.error(`Check-in failed: ${error.message}`);
+      client.emit('error', { code: 'CHECKIN_FAILED', message: error.message });
+    }
+  }
+
+  /**
+   * 일일 미션 목록 조회
+   */
+  @SubscribeMessage('get_missions')
+  async handleGetMissions(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { userId: string },
+  ) {
+    try {
+      client.emit('daily_missions', {
+        userId: data.userId,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      this.logger.error(`Mission fetch failed: ${error.message}`);
+      client.emit('error', { code: 'MISSION_FAILED', message: error.message });
+    }
+  }
+
+  /**
+   * 미션 보상 수령
+   */
+  @SubscribeMessage('claim_mission_reward')
+  async handleClaimMissionReward(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { userId: string; missionId: string },
+  ) {
+    try {
+      client.emit('mission_reward_claimed', {
+        userId: data.userId,
+        missionId: data.missionId,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      this.logger.error(`Mission reward claim failed: ${error.message}`);
+      client.emit('error', { code: 'REWARD_FAILED', message: error.message });
+    }
+  }
+
+  // ============================================================
+  // 관리자 대시보드: 실시간 통계
+  // ============================================================
+
+  /**
+   * 실시간 활성 현황 조회
+   * 용도: 관리자 대시보드 실시간 위젯
+   */
+  @SubscribeMessage('get_realtime_stats')
+  async handleRealtimeStats(
+    @ConnectedSocket() client: Socket,
+  ) {
+    try {
+      client.emit('realtime_stats', {
+        activeNow: this.connectedUsers.size,
+        activeSessions: new Set([...this.connectedUsers.values()].map(u => u.sessionId)).size,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      this.logger.error(`Realtime stats failed: ${error.message}`);
+      client.emit('error', { code: 'STATS_FAILED', message: error.message });
     }
   }
 }

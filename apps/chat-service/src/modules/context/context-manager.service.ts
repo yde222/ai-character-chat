@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 import { ChatSessionEntity, ChatMessageEntity, CharacterEntity } from '@app/database';
 import { IChatMessage } from '@app/common/interfaces';
 import { LLM_CONFIG } from '@app/common/constants';
@@ -42,6 +44,10 @@ export class ContextManagerService {
 
     private readonly summarizer: SummarizationService,
     private readonly config: ConfigService,
+
+    @Optional()
+    @Inject(CACHE_MANAGER)
+    private readonly cacheManager?: Cache,
   ) {}
 
   /**
@@ -61,6 +67,20 @@ export class ContextManagerService {
     summary: string;
     recentMessages: IChatMessage[];
   }> {
+    // Redis 캐시 히트 체크 — 캐시 키: ctx:{sessionId}
+    const cacheKey = `ctx:${sessionId}`;
+    if (this.cacheManager) {
+      const cached = await this.cacheManager.get<{
+        systemPrompt: string;
+        summary: string;
+        recentMessages: IChatMessage[];
+      }>(cacheKey);
+      if (cached) {
+        this.logger.debug(`Cache HIT: ${cacheKey}`);
+        return cached;
+      }
+    }
+
     // 세션 + 캐릭터를 한 번에 조회 (JOIN)
     const session = await this.sessionRepo.findOne({
       where: { id: sessionId },
@@ -92,17 +112,29 @@ export class ContextManagerService {
       timestamp: m.createdAt,
     }));
 
-    return {
+    const result = {
       systemPrompt: session.character?.systemPrompt || this.getDefaultPrompt(),
       summary: session.contextSummary || '',
       recentMessages: mappedMessages,
     };
+
+    // Redis 캐시 저장 — TTL 60초 (새 메시지가 오면 invalidate)
+    if (this.cacheManager) {
+      await this.cacheManager.set(cacheKey, result, 60000);
+    }
+
+    return result;
   }
 
   /**
    * 메시지 저장 + 요약 트리거
    */
   async appendMessages(sessionId: string, messages: IChatMessage[]): Promise<void> {
+    // 캐시 무효화 — 새 메시지가 들어오면 컨텍스트 캐시 즉시 삭제
+    if (this.cacheManager) {
+      await this.cacheManager.del(`ctx:${sessionId}`);
+    }
+
     // 메시지 벌크 INSERT
     const entities = messages.map((msg) => {
       const entity = new ChatMessageEntity();

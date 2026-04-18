@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { LlmService } from '../llm/llm.service';
 import { ContextManagerService } from '../context/context-manager.service';
+import { AffinityService } from '../affinity/affinity.service';
+import { StoryChoiceService } from '../story-choice/story-choice.service';
 import { EmotionTag, LLM_CONFIG } from '@app/common/constants';
 import { measureLatency } from '@app/common/utils';
 
@@ -25,6 +27,8 @@ export class ChatService {
   constructor(
     private readonly llmService: LlmService,
     private readonly contextManager: ContextManagerService,
+    @Optional() private readonly affinityService?: AffinityService,
+    @Optional() private readonly storyChoiceService?: StoryChoiceService,
   ) {}
 
   /**
@@ -80,6 +84,20 @@ export class ChatService {
       `Response generated: ${latencyMs.toFixed(0)}ms, tokens=${llmResponse.tokenUsage.totalTokens}, emotion=${EmotionTag[llmResponse.emotion]}`,
     );
 
+    // 4. 호감도 업데이트
+    let affinityResult = null;
+    if (this.affinityService && (data as any).character_id) {
+      try {
+        affinityResult = await this.affinityService.updateByEmotion(
+          data.user_id,
+          (data as any).character_id,
+          EmotionTag[llmResponse.emotion] || 'NEUTRAL',
+        );
+      } catch (err: any) {
+        this.logger.warn(`Affinity update failed: ${err.message}`);
+      }
+    }
+
     return {
       message_id: uuidv4(),
       content: llmResponse.content,
@@ -90,6 +108,7 @@ export class ChatService {
         completion_tokens: llmResponse.tokenUsage.completionTokens,
         total_tokens: llmResponse.tokenUsage.totalTokens,
       },
+      affinity: affinityResult,
     };
   }
 
@@ -154,13 +173,32 @@ export class ChatService {
         sessionId: data.session_id,
         role: 'assistant',
         content: fullContent,
-        emotion: EmotionTag.NEUTRAL, // 스트리밍 마지막 청크에서 결정
+        emotion: EmotionTag.NEUTRAL,
         tokenCount: 0,
         timestamp: new Date(),
       },
     ]).catch((err) => {
       this.logger.error(`Context update failed: ${err.message}`);
     });
+
+    // 호감도 업데이트 (스트리밍 완료 후, 비동기)
+    if (this.affinityService && (data as any).character_id) {
+      this.affinityService.updateByEmotion(
+        data.user_id,
+        (data as any).character_id,
+        'NEUTRAL',
+      ).then((result) => {
+        onChunk({
+          chunk_id: `${data.session_id}_affinity`,
+          content: '',
+          is_final: false,
+          affinity: result,
+          type: 'affinity_update',
+        });
+      }).catch((err: any) => {
+        this.logger.warn(`Affinity update failed: ${err.message}`);
+      });
+    }
   }
 
   async getHistory(data: { session_id: string; user_id: string; limit: number; cursor: string }) {

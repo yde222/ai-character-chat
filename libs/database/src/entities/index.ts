@@ -6,3 +6,7 @@ export { AttendanceEntity } from './attendance.entity';
 export { BadgeEntity } from './badge.entity';
 export { UserBadgeEntity } from './user-badge.entity';
 export { ImageAssetEntity } from './image-asset.entity';
+export { UserAffinityEntity } from './user-affinity.entity';
+export { SubscriptionEntity } from './subscription.entity';
+export { DailyUsageEntity } from './daily-usage.entity';
+export { DailyMissionEntity } from './daily-mission.entity';
