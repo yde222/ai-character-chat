@@ -441,13 +441,33 @@ export class LlmService implements OnModuleInit {
   // ============================================================
 
   /**
-   * 프롬프트 빌드 — Gemini용 (단일 프롬프트 구조)
+   * 프롬프트 빌드 — Gemini용 (고도화된 구조)
+   *
+   * v1 → v2 변경:
+   * - 페르소나 리마인더 삽입 위치 최적화 (최근 대화 직전)
+   * - 감정 컨텍스트 힌트 추가 (감정 전이 자연스러움)
+   * - 응답 품질 가이드 추가 (길이/톤/구체성)
    */
   private buildPrompt(request: ILlmRequest): string {
     const parts: string[] = [];
 
     if (request.contextSummary) {
       parts.push(`[이전 대화 요약]\n${request.contextSummary}`);
+    }
+
+    // 페르소나 리마인더 — "Lost in the Middle" 대응
+    if ((request as any).personaReminder) {
+      parts.push(`\n${(request as any).personaReminder}`);
+    }
+
+    // 감정 컨텍스트 — 감정 전이 자연스러움 유도
+    if ((request as any).emotionContext) {
+      parts.push(`\n${(request as any).emotionContext}`);
+    }
+
+    // 감정 톤 가이드 — 현재 감정에 맞는 행동 지침
+    if ((request as any).emotionToneGuide) {
+      parts.push(`\n[현재 감정 톤] ${(request as any).emotionToneGuide}`);
     }
 
     if (request.recentMessages.length > 0) {
@@ -459,24 +479,41 @@ export class LlmService implements OnModuleInit {
     }
 
     parts.push(`\n유저: ${request.userMessage}`);
+
     parts.push(
-      '\n[지시] 위 대화에 이어서 캐릭터로서 자연스럽게 응답하세요. ' +
-        '응답 마지막 줄에 [EMOTION:태그명] 형식으로 현재 감정을 표시하세요. ' +
-        '가능한 태그: NEUTRAL, JOY, SADNESS, ANGER, SURPRISE, AFFECTION, FEAR, DISGUST, EXCITEMENT, SHY',
+      '\n[응답 지시]' +
+        '\n1. 위 대화에 이어서 캐릭터로서 자연스럽게 응답하세요.' +
+        '\n2. 응답 길이: 1~3문장 (유저 메시지 길이에 비례).' +
+        '\n3. 일방적 독백 금지 — 유저의 말에 반응하고, 대화를 이어가는 질문이나 반응을 포함하세요.' +
+        '\n4. 감정 표현은 대사와 행동으로 자연스럽게 드러내세요 ("기뻐!" 대신 구체적 행동).' +
+        '\n5. 응답 마지막 줄에 [EMOTION:태그명] 형식으로 현재 감정을 표시하세요.' +
+        '\n   가능한 태그: NEUTRAL, JOY, SADNESS, ANGER, SURPRISE, AFFECTION, FEAR, DISGUST, EXCITEMENT, SHY',
     );
 
     return parts.join('\n');
   }
 
   /**
-   * 프롬프트 빌드 — Claude용 (마지막 user 메시지)
+   * 프롬프트 빌드 — Claude용 (고도화된 마지막 user 메시지)
    */
   private buildUserPrompt(request: ILlmRequest): string {
+    const emotionContext = (request as any).emotionContext || '';
+    const toneGuide = (request as any).emotionToneGuide || '';
+    const reminder = (request as any).personaReminder || '';
+
+    const contextHints = [emotionContext, toneGuide, reminder]
+      .filter(Boolean)
+      .join('\n');
+
     return (
+      `${contextHints ? contextHints + '\n\n' : ''}` +
       `${request.userMessage}\n\n` +
-      '[지시] 캐릭터로서 자연스럽게 응답하세요. ' +
-      '응답 마지막 줄에 [EMOTION:태그명] 형식으로 현재 감정을 표시하세요. ' +
-      '가능한 태그: NEUTRAL, JOY, SADNESS, ANGER, SURPRISE, AFFECTION, FEAR, DISGUST, EXCITEMENT, SHY'
+      '[응답 지시]\n' +
+      '1. 캐릭터로서 자연스럽게 응답하세요.\n' +
+      '2. 응답 길이: 1~3문장 (유저 메시지 길이에 비례).\n' +
+      '3. 유저의 말에 구체적으로 반응하고, 대화를 이어가세요.\n' +
+      '4. 응답 마지막 줄에 [EMOTION:태그명] 형식으로 현재 감정을 표시하세요.\n' +
+      '   가능한 태그: NEUTRAL, JOY, SADNESS, ANGER, SURPRISE, AFFECTION, FEAR, DISGUST, EXCITEMENT, SHY'
     );
   }
 
