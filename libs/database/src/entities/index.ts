@@ -10,3 +10,4 @@ export { UserAffinityEntity } from './user-affinity.entity';
 export { SubscriptionEntity } from './subscription.entity';
 export { DailyUsageEntity } from './daily-usage.entity';
 export { DailyMissionEntity } from './daily-mission.entity';
+export { UserPersonaEntity } from './user-persona.entity';

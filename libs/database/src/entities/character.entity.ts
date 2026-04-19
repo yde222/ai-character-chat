@@ -41,6 +41,41 @@ export class CharacterEntity {
   @Column({ nullable: true })
   coverImageUrl: string;
 
+  // ============================================================
+  // 11순위 추가: 스토리 모드 + 프로필 강화 (Whif.io 벤치마크)
+  // ============================================================
+
+  // 프롤로그 — 채팅 시작 전 보여주는 도입부 서술
+  @Column({ type: 'text', nullable: true })
+  prologue: string;
+
+  // 캐릭터 소개 (시놉시스 형태)
+  @Column({ type: 'text', nullable: true })
+  introduction: string;
+
+  // 추천 페르소나 (JSON 배열)
+  // 예: ["거짓 연인을 연기하는 유저", "은결이에게 서서히 콜드는 유저"]
+  @Column({ type: 'simple-json', nullable: true })
+  recommendedPersonas: string[];
+
+  // 추천 플레이 시나리오 (JSON 배열)
+  // 예: ["예쁘게 하고 외출해서 은결이 질투 유발하기", "진실이 들통난 후 고백"]
+  @Column({ type: 'simple-json', nullable: true })
+  recommendedPlays: string[];
+
+  // 작가 코멘트
+  @Column({ type: 'text', nullable: true })
+  authorComment: string;
+
+  // 장르 태그 (JSON 배열)
+  // 예: ["현대물", "집착공", "HL", "미남공"]
+  @Column({ type: 'simple-json', nullable: true })
+  tags: string[];
+
+  // 내러티브 모드 지원 여부
+  @Column({ default: false })
+  supportsNarrativeMode: boolean;
+
   // 감정 표현 가중치 (JSON)
   @Column({ type: 'simple-json', default: '{}' })
   emotionWeights: Record<string, number>;

@@ -14,6 +14,7 @@ import {
   SubscriptionEntity,
   DailyUsageEntity,
   DailyMissionEntity,
+  UserPersonaEntity,
 } from './entities';
 
 const entities = [
@@ -29,6 +30,7 @@ const entities = [
   SubscriptionEntity,
   DailyUsageEntity,
   DailyMissionEntity,
+  UserPersonaEntity,
 ];
 
 @Module({
