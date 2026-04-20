@@ -15,7 +15,7 @@ async function bootstrap() {
 
   app.enableCors({ origin: '*', credentials: true });
 
-  const port = process.env.GATEWAY_PORT || 3000;
+  const port = process.env.PORT || process.env.GATEWAY_PORT || 3000;
   await app.listen(port);
 
   console.log(`🚀 API Gateway running on http://localhost:${port}`);
