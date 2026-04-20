@@ -38,7 +38,12 @@ COPY apps/ apps/
 COPY libs/ libs/
 
 # 특정 서비스 빌드
-RUN npx nest build ${SERVICE}
+RUN npx nest build ${SERVICE} && \
+    echo "=== Build output ===" && \
+    ls -la dist/ && \
+    ls -la dist/apps/ 2>/dev/null || true && \
+    ls -la dist/apps/api-gateway/ 2>/dev/null || true && \
+    find dist -name "main.js" 2>/dev/null || echo "main.js NOT FOUND"
 
 # Stage 3: Production Runner
 FROM node:20-alpine AS runner
@@ -55,6 +60,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 # 프로덕션 의존성만 복사
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
+RUN echo "=== Runner dist contents ===" && find dist -name "*.js" | head -20
 COPY --from=builder /app/package.json ./package.json
 
 # proto 파일 복사 (gRPC 서비스에 필요)
