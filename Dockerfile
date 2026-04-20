@@ -38,12 +38,7 @@ COPY apps/ apps/
 COPY libs/ libs/
 
 # 특정 서비스 빌드
-RUN npx nest build ${SERVICE} && \
-    echo "=== Build output ===" && \
-    ls -la dist/ && \
-    ls -la dist/apps/ 2>/dev/null || true && \
-    ls -la dist/apps/api-gateway/ 2>/dev/null || true && \
-    find dist -name "main.js" 2>/dev/null || echo "main.js NOT FOUND"
+RUN npx nest build ${SERVICE}
 
 # Stage 3: Production Runner
 FROM node:20-alpine AS runner
@@ -60,7 +55,6 @@ RUN addgroup --system --gid 1001 nodejs && \
 # 프로덕션 의존성만 복사
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
-RUN echo "=== Runner dist contents ===" && find dist -name "*.js" | head -20
 COPY --from=builder /app/package.json ./package.json
 
 # proto 파일 복사 (gRPC 서비스에 필요)
@@ -77,5 +71,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # api-gateway: 3000, chat-service: 50051, image-service: 50052, event-service: 50053
 EXPOSE 3000 50051 50052 50053
 
-# 서비스 실행 (shell form으로 환경변수 치환)
-CMD node dist/apps/${SERVICE_NAME}/main.js
+# 서비스 실행
+# nest build 출력 구조: dist/apps/{service}/apps/{service}/src/main.js
+# (libs/ 참조로 rootDir이 프로젝트 루트가 되어 경로가 보존됨)
+CMD node dist/apps/${SERVICE_NAME}/apps/${SERVICE_NAME}/src/main.js
