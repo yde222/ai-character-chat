@@ -1,52 +1,23 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { ClientsModule, Transport } from '@nestjs/microservices';
-import { join } from 'path';
-import { DatabaseModule } from '@app/database';
-import { CHAT_PACKAGE, IMAGE_PACKAGE, CHAT_SERVICE, IMAGE_MATCHING_SERVICE } from '@app/common/constants';
+import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './modules/auth/auth.module';
 import { HealthModule } from './modules/health/health.module';
+import { ChatModule } from './modules/chat/chat.module';
 import { ChatGateway } from './gateways/chat.gateway';
 
+/**
+ * AppModule — MVP 통합 버전
+ *
+ * gRPC 마이크로서비스 의존성 제거.
+ * LLM 호출을 api-gateway 내에서 직접 처리.
+ * DatabaseModule도 MVP에서는 제외 (인메모리 세션 관리).
+ */
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-
-    DatabaseModule,
-
-    ClientsModule.registerAsync([
-      {
-        name: CHAT_SERVICE,
-        imports: [ConfigModule],
-        inject: [ConfigService],
-        useFactory: (config: ConfigService) => ({
-          transport: Transport.GRPC,
-          options: {
-            package: CHAT_PACKAGE,
-            protoPath: join(process.cwd(), 'libs/proto/src/chat.proto'),
-            url: config.get('CHAT_SERVICE_URL', 'localhost:50051'),
-            loader: { keepCase: true, longs: Number, enums: Number, defaults: true, oneofs: true },
-          },
-        }),
-      },
-      {
-        name: IMAGE_MATCHING_SERVICE,
-        imports: [ConfigModule],
-        inject: [ConfigService],
-        useFactory: (config: ConfigService) => ({
-          transport: Transport.GRPC,
-          options: {
-            package: IMAGE_PACKAGE,
-            protoPath: join(process.cwd(), 'libs/proto/src/image.proto'),
-            url: config.get('IMAGE_SERVICE_URL', 'localhost:50052'),
-            loader: { keepCase: true, longs: Number, enums: Number, defaults: true, oneofs: true },
-          },
-        }),
-      },
-    ]),
-
     AuthModule,
     HealthModule,
+    ChatModule,
   ],
   providers: [ChatGateway],
 })

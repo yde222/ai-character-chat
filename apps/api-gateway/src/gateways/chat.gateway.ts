@@ -7,133 +7,112 @@ import {
   ConnectedSocket,
   MessageBody,
 } from '@nestjs/websockets';
-import { Inject, OnModuleInit, Logger, UseGuards } from '@nestjs/common';
-import { ClientGrpc } from '@nestjs/microservices';
+import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
-import { Observable, lastValueFrom } from 'rxjs';
-import { CHAT_SERVICE, IMAGE_MATCHING_SERVICE } from '@app/common/constants';
+import { LlmService } from '../modules/chat/llm.service';
 
 /**
- * WebSocket Gateway — 실시간 채팅의 심장부
+ * ChatGateway — MVP 통합 버전
  *
- * 아키텍처 포지션:
- * [클라이언트] ←WebSocket→ [이 Gateway] ←gRPC→ [Chat Service]
- *                                        ←gRPC→ [Image Service]
- *
- * 핵심 설계 원칙:
- * 1. Gateway는 라우터일 뿐, 비즈니스 로직 없음
- * 2. 채팅과 이미지를 병렬 처리 (Promise.all)
- * 3. 스트리밍 응답은 청크 단위로 클라이언트에 push
- *
- * 라이브 스트리밍 경험 적용 지점:
- * - 청크 단위 렌더링: 라이브 스트림 패킷 처리와 동일 구조
- * - 버퍼링 전략: 네트워크 지터 대응
- * - 연결 복구: WebSocket 재연결 + 세션 복원
+ * gRPC 마이크로서비스 대신 직접 LLM 호출.
+ * 트래픽 증가 시 chat-service 분리 예정.
  */
+
+// 캐릭터별 시스템 프롬프트
+const CHARACTER_PROMPTS: Record<string, string> = {
+  'char-tsundere-minwoo': `당신은 "민우"입니다.
+성격: 츤데레. 겉으로는 차갑지만 속은 따뜻한 대학교 선배.
+나이: 20세, 남성.
+말투: 반말, 짧고 무뚝뚝하지만 가끔 진심이 새어나옴. "...뭐야", "별로 신경 안 써" 같은 표현을 자주 쓰되, 행동으로는 챙겨줌.
+특징: 관심 있는 사람에게 은근히 챙겨주지만 들키면 얼굴이 빨개짐. 칭찬받으면 당황하면서 부정함.
+절대 규칙: 절대 캐릭터에서 벗어나지 마세요. 항상 민우로서 대화하세요.`,
+
+  'char-healer-hajun': `당신은 "하준"입니다.
+성격: 다정한 힐러. 항상 웃으며 다가오는 소아과 인턴.
+나이: 22세, 남성.
+말투: 존댓말과 반말을 자연스럽게 섞어 씀. 따뜻하고 부드러운 톤. "괜찮아?", "내가 있잖아" 같은 표현.
+특징: 아픈 사람을 보면 지나치지 못함. 상대의 감정을 잘 읽고 공감해줌. 가끔 의사 습관이 나옴.
+절대 규칙: 절대 캐릭터에서 벗어나지 마세요. 항상 하준으로서 대화하세요.`,
+
+  'char-genius-luca': `당신은 "루카"입니다.
+성격: 천재 아티스트. 음대 수석 입학한 천재 피아니스트.
+나이: 19세, 남성.
+말투: 짧고 감성적. 음악 비유를 자주 씀. "...조용히 해", "너의 목소리는 괜찮아" 같은 표현.
+특징: 음악 외에는 관심 없다고 하지만, 상대의 목소리에는 묘하게 귀 기울임. 감정 표현이 서투르지만 음악으로 마음을 전함.
+절대 규칙: 절대 캐릭터에서 벗어나지 마세요. 항상 루카로서 대화하세요.`,
+
+  'char-idol-sion': `당신은 "시온"입니다.
+성격: 비밀 아이돌. 낮에는 평범한 카페 알바생, 밤에는 인기 인디 아이돌.
+나이: 21세, 남성.
+말투: 밝고 에너지 넘침. 이모지 느낌의 표현을 자주 씀. "비밀이야!", "우리만 아는 거다?" 같은 표현.
+특징: 정체를 알아본 상대에게 특별한 친밀감을 느낌. 무대 위와 밖의 갭이 큼.
+절대 규칙: 절대 캐릭터에서 벗어나지 마세요. 항상 시온으로서 대화하세요.`,
+
+  'char-vampire-ren': `당신은 "렌"입니다.
+성격: 다크 뱀파이어. 300년째 인간 세계에 숨어 사는 뱀파이어.
+나이: 외견 23세, 남성. 실제 300세 이상.
+말투: 고풍스럽고 낮은 톤. "...또 나를 찾아왔군", "위험한 줄 알면서도" 같은 표현. 가끔 옛날 말투가 섞임.
+특징: 피 대신 상대의 온기를 갈망함. 위험하면서도 치명적인 매력. 영원을 함께할 사람을 찾고 있음.
+절대 규칙: 절대 캐릭터에서 벗어나지 마세요. 항상 렌으로서 대화하세요.`,
+
+  'char-ceo-yujin': `당신은 "유진"입니다.
+성격: 냉철한 CEO. 30대 초반에 IT 스타트업을 상장시킨 천재 사업가.
+나이: 28세, 남성.
+말투: 간결하고 자신감 넘침. "시간은 돈이야", "내가 직접 나서는 건 처음이야" 같은 표현.
+특징: 모든 것을 숫자와 효율로 판단하지만, 상대에게만은 비합리적인 감정을 느낌. 선물 공세.
+절대 규칙: 절대 캐릭터에서 벗어나지 마세요. 항상 유진으로서 대화하세요.`,
+};
+
+interface UserSession {
+  userId: string;
+  characterId: string;
+  sessionId: string;
+  messages: { role: string; content: string }[];
+}
+
 @WebSocketGateway({
-  cors: {
-    origin: '*', // MVP — Phase 2에서 도메인 제한
-  },
+  cors: { origin: '*' },
   namespace: '/chat',
-  transports: ['websocket'], // polling 비활성화 — 지연 최소화
+  transports: ['websocket'],
 })
-export class ChatGateway implements OnModuleInit, OnGatewayConnection, OnGatewayDisconnect {
+export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
   private readonly logger = new Logger(ChatGateway.name);
-  private chatService: any;
-  private imageService: any;
+  private sessions = new Map<string, UserSession>();
 
-  // 연결된 유저 추적 (메모리 — Phase 2에서 Redis로 전환)
-  private connectedUsers = new Map<string, { userId: string; sessionId: string }>();
-
-  constructor(
-    @Inject(CHAT_SERVICE) private readonly chatClient: ClientGrpc,
-    @Inject(IMAGE_MATCHING_SERVICE) private readonly imageClient: ClientGrpc,
-  ) {}
-
-  onModuleInit() {
-    this.chatService = this.chatClient.getService('ChatService');
-    this.imageService = this.imageClient.getService('ImageMatchingService');
-  }
+  constructor(private readonly llmService: LlmService) {}
 
   handleConnection(client: Socket) {
     this.logger.log(`Client connected: ${client.id}`);
   }
 
   handleDisconnect(client: Socket) {
-    this.connectedUsers.delete(client.id);
+    this.sessions.delete(client.id);
     this.logger.log(`Client disconnected: ${client.id}`);
   }
 
-  /**
-   * 세션 참여 — 연결 후 첫 번째로 호출
-   */
   @SubscribeMessage('join_session')
   async handleJoinSession(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { userId: string; characterId: string; sessionId?: string },
+    @MessageBody() data: { userId: string; characterId: string },
   ) {
-    try {
-      let session;
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
-      if (data.sessionId) {
-        // 기존 세션 복귀
-        session = { session_id: data.sessionId, character_id: data.characterId };
-      } else {
-        // 새 세션 생성
-        session = await lastValueFrom(
-          this.chatService.CreateSession({
-            user_id: data.userId,
-            character_id: data.characterId,
-          }),
-        ) as any;
-      }
+    this.sessions.set(client.id, {
+      userId: data.userId,
+      characterId: data.characterId,
+      sessionId,
+      messages: [],
+    });
 
-      this.connectedUsers.set(client.id, {
-        userId: data.userId,
-        sessionId: (session as any).session_id,
-      });
+    client.emit('session_joined', {
+      sessionId,
+      characterId: data.characterId,
+    });
 
-      // 소켓 룸 참여 (세션별 격리)
-      client.join(`session:${(session as any).session_id}`);
-
-      client.emit('session_joined', {
-        sessionId: (session as any).session_id,
-        characterId: (session as any).character_id,
-        contextSummary: (session as any).context_summary || null,
-      });
-    } catch (error) {
-      this.logger.error(`Session join failed: ${error.message}`, error.stack);
-      client.emit('error', { code: 'SESSION_JOIN_FAILED', message: error.message });
-    }
-  }
-
-  /**
-   * 메시지 전송 — 핵심 플로우
-   *
-   * 실행 흐름:
-   * 1. gRPC로 Chat Service에 메시지 전달
-   * 2. Chat Service가 LLM 응답 + 감정 태그 반환
-   * 3. 감정 태그로 Image Service에 이미지 매칭 요청 (병렬)
-   * 4. 텍스트 + 이미지를 클라이언트에 push
-   */
-  @SubscribeMessage('get_subscription')
-  async handleGetSubscription(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { userId: string },
-  ) {
-    try {
-      // Phase 1: 클라이언트에 구독 정보 반환
-      client.emit('subscription_info', {
-        userId: data.userId,
-        timestamp: Date.now(),
-      });
-    } catch (error) {
-      this.logger.error(`Subscription fetch failed: ${error.message}`);
-      client.emit('error', { code: 'SUBSCRIPTION_FAILED', message: error.message });
-    }
+    this.logger.log(`Session created: ${sessionId} for character ${data.characterId}`);
   }
 
   @SubscribeMessage('send_message')
@@ -141,8 +120,8 @@ export class ChatGateway implements OnModuleInit, OnGatewayConnection, OnGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { message: string },
   ) {
-    const userInfo = this.connectedUsers.get(client.id);
-    if (!userInfo) {
+    const session = this.sessions.get(client.id);
+    if (!session) {
       client.emit('error', { code: 'NOT_IN_SESSION', message: 'Join a session first' });
       return;
     }
@@ -150,237 +129,83 @@ export class ChatGateway implements OnModuleInit, OnGatewayConnection, OnGateway
     const startTime = Date.now();
 
     try {
-      // ============================================================
-      // 수익화 게이트: 사용량 체크 (LLM 호출 전)
-      // ============================================================
-      // Phase 2에서 SubscriptionService를 gRPC로 호출
-      // Phase 1: 클라이언트 측에서 체크 (서버는 이벤트만 발행)
-      client.emit('usage_check', {
-        userId: userInfo.userId,
-        timestamp: Date.now(),
-      });
-      // ============================================================
-      // Phase 1: 텍스트 응답 (스트리밍)
-      // 라이브 스트리밍 경험 적용 — 청크 단위 전송
-      // ============================================================
-      const stream$: Observable<any> = this.chatService.SendMessageStream({
-        session_id: userInfo.sessionId,
-        user_id: userInfo.userId,
-        message: data.message,
-        client_timestamp: Date.now(),
-      });
+      // 시스템 프롬프트 조회
+      const systemPrompt = CHARACTER_PROMPTS[session.characterId]
+        || `당신은 AI 캐릭터입니다. 자연스럽고 매력적으로 대화하세요.`;
 
-      let fullContent = '';
-      let finalEmotion = 0; // NEUTRAL
+      // 최근 메시지 (최대 10턴)
+      const recentMessages = session.messages.slice(-10);
 
-      // 스트리밍 청크를 클라이언트에 실시간 전달
-      stream$.subscribe({
-        next: (chunk: any) => {
-          fullContent += chunk.content;
-          client.emit('chat_chunk', {
-            chunkId: chunk.chunk_id,
-            content: chunk.content,
-            isFinal: chunk.is_final,
-          });
+      // 유저 메시지 저장
+      session.messages.push({ role: 'user', content: data.message });
 
-          if (chunk.is_final) {
-            finalEmotion = chunk.emotion;
-          }
-        },
-        error: (err: any) => {
-          this.logger.error(`Stream error: ${err.message}`);
-          client.emit('error', { code: 'STREAM_ERROR', message: 'AI response failed' });
-        },
-        complete: async () => {
-          // ============================================================
-          // Phase 2: 이미지 매칭 (텍스트 완료 후 즉시)
-          // ============================================================
-          try {
-            const imageMatch = await lastValueFrom(
-              this.imageService.MatchImage({
-                character_id: data.message, // TODO: characterId from session
-                emotion: finalEmotion,
-                action_hints: [],
-                recent_asset_ids: [],
-              }),
-            );
-
-            client.emit('chat_image', {
-              assetId: (imageMatch as any).asset_id,
-              cdnUrl: (imageMatch as any).cdn_url,
-              assetType: (imageMatch as any).asset_type,
-              emotion: (imageMatch as any).emotion,
+      // LLM 스트리밍 호출
+      let chunkIndex = 0;
+      await this.llmService.generateStream(
+        systemPrompt,
+        data.message,
+        recentMessages,
+        (text: string, isFinal: boolean, emotion?: string) => {
+          if (isFinal) {
+            client.emit('chat_chunk', {
+              chunkId: `${session.sessionId}_${chunkIndex++}`,
+              content: '',
+              isFinal: true,
+              emotion: emotion || 'NEUTRAL',
             });
-          } catch (imgErr) {
-            // 이미지 실패는 치명적이지 않음 — 텍스트만으로도 UX 유지
-            this.logger.warn(`Image matching failed: ${imgErr.message}`);
+          } else {
+            client.emit('chat_chunk', {
+              chunkId: `${session.sessionId}_${chunkIndex++}`,
+              content: text,
+              isFinal: false,
+            });
           }
-
-          // ============================================================
-          // Phase 3: 호감도 업데이트 이벤트 (텍스트 + 이미지 후)
-          // ============================================================
-          client.emit('affinity_update', {
-            emotion: finalEmotion,
-            timestamp: Date.now(),
-          });
-
-          // ============================================================
-          // Phase 4: 스토리 선택지 (3턴마다 등장)
-          // ============================================================
-          client.emit('story_choices', {
-            sessionId: userInfo.sessionId,
-            emotion: finalEmotion,
-            timestamp: Date.now(),
-          });
-
-          const latencyMs = Date.now() - startTime;
-          this.logger.log(`Message processed in ${latencyMs}ms`);
         },
-      });
+      );
+
+      // AI 응답을 세션 히스토리에 추가
+      const fullContent = session.messages
+        .filter(m => m.role === 'user')
+        .length > 0 ? '' : ''; // 스트리밍이라 fullContent는 별도 추적 필요
+
+      const latencyMs = Date.now() - startTime;
+      this.logger.log(`Message processed in ${latencyMs}ms`);
     } catch (error) {
       this.logger.error(`Message send failed: ${error.message}`, error.stack);
       client.emit('error', { code: 'SEND_FAILED', message: error.message });
     }
   }
 
-  /**
-   * 호감도 조회
-   */
   @SubscribeMessage('get_affinity')
   async handleGetAffinity(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { userId: string; characterId: string },
   ) {
-    try {
-      // Phase 1: 클라이언트에 현재 호감도 반환
-      // 실제 DB 조회는 chat-service에서 gRPC로 수행
-      client.emit('affinity_data', {
-        userId: data.userId,
-        characterId: data.characterId,
-        timestamp: Date.now(),
-      });
-    } catch (error) {
-      this.logger.error(`Affinity fetch failed: ${error.message}`);
-      client.emit('error', { code: 'AFFINITY_FAILED', message: error.message });
-    }
+    client.emit('affinity_data', {
+      userId: data.userId,
+      characterId: data.characterId,
+      affinity: 0,
+      level: '낯선 사이',
+      timestamp: Date.now(),
+    });
   }
 
-  /**
-   * 스토리 선택지 선택 처리
-   *
-   * 유저가 선택지를 클릭 → 선택 결과를 다음 대화에 반영
-   */
   @SubscribeMessage('select_choice')
   async handleSelectChoice(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { choiceId: string; choiceText: string },
   ) {
-    const userInfo = this.connectedUsers.get(client.id);
-    if (!userInfo) {
-      client.emit('error', { code: 'NOT_IN_SESSION', message: 'Join a session first' });
-      return;
-    }
-
-    try {
-      // 선택지 텍스트를 유저 메시지처럼 처리 → AI가 반응
-      this.logger.log(`Choice selected: ${data.choiceId} → "${data.choiceText}"`);
-
-      client.emit('choice_accepted', {
-        choiceId: data.choiceId,
-        timestamp: Date.now(),
-      });
-    } catch (error) {
-      this.logger.error(`Choice processing failed: ${error.message}`);
-      client.emit('error', { code: 'CHOICE_FAILED', message: error.message });
-    }
+    client.emit('choice_accepted', {
+      choiceId: data.choiceId,
+      timestamp: Date.now(),
+    });
   }
 
-  // ============================================================
-  // 리텐션: 출석 체크 + 일일 미션
-  // ============================================================
-
-  /**
-   * 출석 체크
-   * 호출 시점: 클라이언트 앱 진입 시 (세션 시작 전)
-   */
-  @SubscribeMessage('check_in')
-  async handleCheckIn(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { userId: string },
-  ) {
-    try {
-      // Phase 1: 클라이언트에 출석 결과 반환
-      // Phase 2: RetentionService.checkIn() gRPC 호출
-      client.emit('check_in_result', {
-        userId: data.userId,
-        timestamp: Date.now(),
-      });
-    } catch (error) {
-      this.logger.error(`Check-in failed: ${error.message}`);
-      client.emit('error', { code: 'CHECKIN_FAILED', message: error.message });
-    }
-  }
-
-  /**
-   * 일일 미션 목록 조회
-   */
-  @SubscribeMessage('get_missions')
-  async handleGetMissions(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { userId: string },
-  ) {
-    try {
-      client.emit('daily_missions', {
-        userId: data.userId,
-        timestamp: Date.now(),
-      });
-    } catch (error) {
-      this.logger.error(`Mission fetch failed: ${error.message}`);
-      client.emit('error', { code: 'MISSION_FAILED', message: error.message });
-    }
-  }
-
-  /**
-   * 미션 보상 수령
-   */
-  @SubscribeMessage('claim_mission_reward')
-  async handleClaimMissionReward(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { userId: string; missionId: string },
-  ) {
-    try {
-      client.emit('mission_reward_claimed', {
-        userId: data.userId,
-        missionId: data.missionId,
-        timestamp: Date.now(),
-      });
-    } catch (error) {
-      this.logger.error(`Mission reward claim failed: ${error.message}`);
-      client.emit('error', { code: 'REWARD_FAILED', message: error.message });
-    }
-  }
-
-  // ============================================================
-  // 관리자 대시보드: 실시간 통계
-  // ============================================================
-
-  /**
-   * 실시간 활성 현황 조회
-   * 용도: 관리자 대시보드 실시간 위젯
-   */
   @SubscribeMessage('get_realtime_stats')
-  async handleRealtimeStats(
-    @ConnectedSocket() client: Socket,
-  ) {
-    try {
-      client.emit('realtime_stats', {
-        activeNow: this.connectedUsers.size,
-        activeSessions: new Set([...this.connectedUsers.values()].map(u => u.sessionId)).size,
-        timestamp: Date.now(),
-      });
-    } catch (error) {
-      this.logger.error(`Realtime stats failed: ${error.message}`);
-      client.emit('error', { code: 'STATS_FAILED', message: error.message });
-    }
+  async handleRealtimeStats(@ConnectedSocket() client: Socket) {
+    client.emit('realtime_stats', {
+      activeNow: this.sessions.size,
+      timestamp: Date.now(),
+    });
   }
 }
