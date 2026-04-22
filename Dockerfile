@@ -32,6 +32,10 @@ ARG SERVICE=api-gateway
 COPY package.json package-lock.json* yarn.lock* ./
 RUN npm ci
 
+# 캐시 버스팅 — 값 변경 시 이후 모든 레이어 재빌드
+# Railway Docker 캐시가 소스 변경을 감지하지 못할 때 이 값을 증가시킬 것
+ARG CACHEBUST=2
+
 # 소스 복사 (node_modules는 위에서 설치됨)
 COPY tsconfig.json nest-cli.json ./
 COPY apps/ apps/
