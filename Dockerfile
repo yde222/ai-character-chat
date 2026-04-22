@@ -75,3 +75,4 @@ EXPOSE 3000 50051 50052 50053
 # nest build 출력 구조: dist/apps/{service}/apps/{service}/src/main.js
 # (libs/ 참조로 rootDir이 프로젝트 루트가 되어 경로가 보존됨)
 CMD node dist/apps/${SERVICE_NAME}/apps/${SERVICE_NAME}/src/main.js
+
