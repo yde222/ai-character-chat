@@ -44,6 +44,13 @@ COPY libs/ libs/
 # 특정 서비스 빌드
 RUN npx nest build ${SERVICE}
 
+# 빌드 출력 경로 확인 및 엔트리포인트 심볼릭 링크 생성
+# libs/ 참조 유무에 따라 경로가 달라지므로 동적으로 찾음
+RUN MAIN_JS=$(find dist -name "main.js" -path "*${SERVICE}*" | head -1) && \
+    echo "Found entry point: ${MAIN_JS}" && \
+    mkdir -p dist/entry && \
+    ln -s /app/${MAIN_JS} dist/entry/main.js
+
 # Stage 3: Production Runner
 FROM node:20-alpine AS runner
 WORKDIR /app
@@ -75,8 +82,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # api-gateway: 3000, chat-service: 50051, image-service: 50052, event-service: 50053
 EXPOSE 3000 50051 50052 50053
 
-# 서비스 실행
-# nest build 출력 구조: dist/apps/{service}/apps/{service}/src/main.js
-# (libs/ 참조로 rootDir이 프로젝트 루트가 되어 경로가 보존됨)
-CMD node dist/apps/${SERVICE_NAME}/apps/${SERVICE_NAME}/src/main.js
+# 서비스 실행 — 빌드 시 생성된 심볼릭 링크로 경로 고정
+CMD node dist/entry/main.js
 
