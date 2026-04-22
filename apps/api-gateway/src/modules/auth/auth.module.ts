@@ -2,8 +2,6 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { UserEntity } from '@app/database';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { GoogleStrategy } from './strategies/google.strategy';
@@ -13,17 +11,10 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { WsJwtGuard } from './guards/ws-jwt.guard';
 
 /**
- * Auth Module — 소셜 로그인 + JWT
+ * Auth Module — MVP 경량 버전
  *
- * 인증 플로우:
- * 1. 클라이언트 → /auth/google (또는 /auth/kakao) 리다이렉트
- * 2. OAuth 프로바이더에서 인증 완료 → 콜백 URL로 리다이렉트
- * 3. 콜백에서 유저 생성/조회 → JWT 발급
- * 4. 클라이언트는 JWT를 WebSocket 연결 시 handshake에 포함
- *
- * 보안:
- * - JWT 만료: 7일 (모바일 UX — 매일 로그인은 이탈 유발)
- * - Phase 2: 리프레시 토큰 + Redis 블랙리스트
+ * TypeORM/DB 의존성 제거. JWT 토큰 자체에 유저 정보를 담아 인증.
+ * Phase 2: TypeORM + UserEntity + PostgreSQL 복구.
  */
 @Module({
   imports: [
@@ -38,7 +29,6 @@ import { WsJwtGuard } from './guards/ws-jwt.guard';
         },
       }),
     }),
-    TypeOrmModule.forFeature([UserEntity]),
   ],
   controllers: [AuthController],
   providers: [

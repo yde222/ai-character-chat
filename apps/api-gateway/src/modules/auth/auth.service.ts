@@ -1,8 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { UserEntity } from '@app/database';
 
 export interface OAuthProfile {
   provider: string;
@@ -20,37 +17,43 @@ export interface JwtPayload {
 }
 
 /**
- * Auth Service
+ * MVP용 유저 인터페이스 (TypeORM Entity 대체)
+ */
+export interface MvpUser {
+  id: string;
+  provider: string;
+  providerId: string;
+  email: string;
+  displayName: string;
+  avatarUrl: string;
+  tier: string;
+  dailyMessageQuota: number;
+  bonusMessages: number;
+}
+
+/**
+ * Auth Service — MVP 경량 버전
  *
- * 핵심 로직:
- * - OAuth 콜백에서 유저 생성 또는 기존 유저 조회 (upsert)
- * - JWT 토큰 발급
- * - 토큰 검증 (JwtStrategy에서 호출)
+ * TypeORM 제거. 인메모리 유저 저장 + JWT 토큰 기반 인증.
+ * Phase 2: PostgreSQL + TypeORM UserEntity 복구.
  */
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly users = new Map<string, MvpUser>();
 
-  constructor(
-    private readonly jwtService: JwtService,
-    @InjectRepository(UserEntity)
-    private readonly userRepo: Repository<UserEntity>,
-  ) {}
+  constructor(private readonly jwtService: JwtService) {}
 
   /**
-   * OAuth 로그인/회원가입
-   *
-   * 기존 유저: provider + providerId로 조회 → 로그인
-   * 신규 유저: 자동 생성 → 회원가입 + 로그인
+   * OAuth 로그인/회원가입 (인메모리)
    */
-  async validateOAuthUser(profile: OAuthProfile): Promise<UserEntity> {
-    let user = await this.userRepo.findOneBy({
-      provider: profile.provider,
-      providerId: profile.providerId,
-    });
+  async validateOAuthUser(profile: OAuthProfile): Promise<MvpUser> {
+    const key = `${profile.provider}:${profile.providerId}`;
+    let user = this.users.get(key);
 
     if (!user) {
-      user = this.userRepo.create({
+      user = {
+        id: `user_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         provider: profile.provider,
         providerId: profile.providerId,
         email: profile.email || '',
@@ -59,13 +62,9 @@ export class AuthService {
         tier: 'free',
         dailyMessageQuota: 50,
         bonusMessages: 0,
-        lastLoginAt: new Date(),
-      });
-      await this.userRepo.save(user);
+      };
+      this.users.set(key, user);
       this.logger.log(`New user created: ${user.displayName} (${profile.provider})`);
-    } else {
-      user.lastLoginAt = new Date();
-      await this.userRepo.save(user);
     }
 
     return user;
@@ -74,7 +73,7 @@ export class AuthService {
   /**
    * JWT 발급
    */
-  generateToken(user: UserEntity): { accessToken: string } {
+  generateToken(user: MvpUser): { accessToken: string } {
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
@@ -88,10 +87,20 @@ export class AuthService {
   }
 
   /**
-   * JWT 검증 (JwtStrategy에서 호출)
+   * JWT 검증 — DB 조회 없이 페이로드에서 직접 유저 정보 반환
    */
-  async validateJwtPayload(payload: JwtPayload): Promise<UserEntity | null> {
-    return this.userRepo.findOneBy({ id: payload.sub });
+  async validateJwtPayload(payload: JwtPayload): Promise<MvpUser> {
+    return {
+      id: payload.sub,
+      provider: 'jwt',
+      providerId: payload.sub,
+      email: payload.email,
+      displayName: payload.displayName,
+      avatarUrl: '',
+      tier: payload.tier,
+      dailyMessageQuota: 50,
+      bonusMessages: 0,
+    };
   }
 
   /**
