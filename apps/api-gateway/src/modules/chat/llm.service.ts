@@ -1,26 +1,29 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleGenerativeAI, GenerativeModel, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
+import Anthropic from '@anthropic-ai/sdk';
 
 /**
- * 경량 LLM Service — api-gateway 내장용 (MVP)
+ * LLM Service — Gemini Primary + Claude Fallback
  *
- * chat-service의 풀버전 대신, Gemini 직접 호출만 지원.
- * 마이크로서비스 분리는 트래픽 증가 시 진행.
+ * 전략: Gemini 먼저 시도 → 실패(429/503) → Claude 자동 전환
+ * 성공 사례: Replicate (2024) — 멀티 LLM fallback으로 가용성 99.9% 달성
  */
 @Injectable()
 export class LlmService implements OnModuleInit {
   private readonly logger = new Logger(LlmService.name);
   private geminiModel: GenerativeModel | null = null;
+  private anthropic: Anthropic | null = null;
 
   constructor(private readonly config: ConfigService) {}
 
   onModuleInit() {
+    // Gemini 초기화
     const geminiKey = this.config.get<string>('GEMINI_API_KEY');
     if (geminiKey) {
       const genAI = new GoogleGenerativeAI(geminiKey);
       this.geminiModel = genAI.getGenerativeModel({
-        model: this.config.get('LLM_PRIMARY_MODEL', 'gemini-2.5-flash'),
+        model: this.config.get('LLM_PRIMARY_MODEL', 'gemini-2.0-flash'),
         safetySettings: [
           { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
           { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
@@ -30,12 +33,25 @@ export class LlmService implements OnModuleInit {
       });
       this.logger.log('✅ Gemini SDK initialized');
     } else {
-      this.logger.warn('⚠️ GEMINI_API_KEY not set — LLM unavailable');
+      this.logger.warn('⚠️ GEMINI_API_KEY not set');
+    }
+
+    // Anthropic 초기화
+    const anthropicKey = this.config.get<string>('ANTHROPIC_API_KEY');
+    if (anthropicKey) {
+      this.anthropic = new Anthropic({ apiKey: anthropicKey });
+      this.logger.log('✅ Anthropic SDK initialized');
+    } else {
+      this.logger.warn('⚠️ ANTHROPIC_API_KEY not set');
+    }
+
+    if (!geminiKey && !anthropicKey) {
+      this.logger.error('❌ No LLM API key configured — chat will not work');
     }
   }
 
   /**
-   * 스트리밍 응답 생성
+   * 스트리밍 응답 생성 — Gemini 우선, 실패 시 Claude fallback
    */
   async generateStream(
     systemPrompt: string,
@@ -43,13 +59,42 @@ export class LlmService implements OnModuleInit {
     recentMessages: { role: string; content: string }[],
     onChunk: (text: string, isFinal: boolean, emotion?: string) => void,
   ): Promise<void> {
-    if (!this.geminiModel) {
-      throw new Error('Gemini SDK not initialized — GEMINI_API_KEY missing');
+    // Gemini 먼저 시도
+    if (this.geminiModel) {
+      try {
+        await this.generateWithGemini(systemPrompt, userMessage, recentMessages, onChunk);
+        return;
+      } catch (error) {
+        this.logger.warn(`Gemini failed (${error.message?.slice(0, 80)}), trying Claude fallback...`);
+      }
     }
 
+    // Claude fallback
+    if (this.anthropic) {
+      try {
+        await this.generateWithClaude(systemPrompt, userMessage, recentMessages, onChunk);
+        return;
+      } catch (error) {
+        this.logger.error(`Claude also failed: ${error.message}`);
+        throw error;
+      }
+    }
+
+    throw new Error('No LLM available — both Gemini and Claude failed or unconfigured');
+  }
+
+  /**
+   * Gemini 스트리밍
+   */
+  private async generateWithGemini(
+    systemPrompt: string,
+    userMessage: string,
+    recentMessages: { role: string; content: string }[],
+    onChunk: (text: string, isFinal: boolean, emotion?: string) => void,
+  ): Promise<void> {
     const prompt = this.buildPrompt(userMessage, recentMessages);
 
-    const result = await this.geminiModel.generateContentStream({
+    const result = await this.geminiModel!.generateContentStream({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       systemInstruction: { role: 'system', parts: [{ text: systemPrompt }] },
       generationConfig: {
@@ -74,10 +119,62 @@ export class LlmService implements OnModuleInit {
       }
     }
 
-    // 감정 태그 파싱
-    const { content, emotion } = this.parseEmotion(fullText);
+    const { emotion } = this.parseEmotion(fullText);
 
-    // 남은 버퍼 플러시 (감정 태그 제거)
+    if (buffer.length > 0) {
+      const clean = buffer.replace(/\[EMOTION:\w+\]/g, '').trim();
+      if (clean) onChunk(clean, false);
+    }
+
+    onChunk('', true, emotion);
+  }
+
+  /**
+   * Claude 스트리밍
+   */
+  private async generateWithClaude(
+    systemPrompt: string,
+    userMessage: string,
+    recentMessages: { role: string; content: string }[],
+    onChunk: (text: string, isFinal: boolean, emotion?: string) => void,
+  ): Promise<void> {
+    const prompt = this.buildPrompt(userMessage, recentMessages);
+
+    // Anthropic Messages API 형식으로 변환
+    const messages: { role: 'user' | 'assistant'; content: string }[] = [];
+    for (const msg of recentMessages) {
+      messages.push({
+        role: msg.role === 'user' ? 'user' : 'assistant',
+        content: msg.content,
+      });
+    }
+    messages.push({ role: 'user', content: prompt });
+
+    const stream = this.anthropic!.messages.stream({
+      model: this.config.get('ANTHROPIC_MODEL', 'claude-haiku-4-5-20251001'),
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages,
+    });
+
+    let fullText = '';
+    let buffer = '';
+
+    stream.on('text', (text: string) => {
+      fullText += text;
+      buffer += text;
+
+      if (buffer.length >= 4) {
+        onChunk(buffer, false);
+        buffer = '';
+      }
+    });
+
+    // 스트림 완료 대기
+    await stream.finalMessage();
+
+    const { emotion } = this.parseEmotion(fullText);
+
     if (buffer.length > 0) {
       const clean = buffer.replace(/\[EMOTION:\w+\]/g, '').trim();
       if (clean) onChunk(clean, false);
