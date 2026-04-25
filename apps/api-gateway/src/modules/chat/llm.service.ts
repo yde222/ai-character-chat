@@ -140,21 +140,12 @@ export class LlmService implements OnModuleInit {
   ): Promise<void> {
     const prompt = this.buildPrompt(userMessage, recentMessages);
 
-    // Anthropic Messages API 형식으로 변환
-    const messages: { role: 'user' | 'assistant'; content: string }[] = [];
-    for (const msg of recentMessages) {
-      messages.push({
-        role: msg.role === 'user' ? 'user' : 'assistant',
-        content: msg.content,
-      });
-    }
-    messages.push({ role: 'user', content: prompt });
-
+    // 단일 user 메시지로 전송 (대화 히스토리는 prompt 안에 포함됨)
     const stream = this.anthropic!.messages.stream({
-      model: this.config.get('ANTHROPIC_MODEL', 'claude-haiku-4-5-20251001'),
+      model: this.config.get('ANTHROPIC_MODEL', 'claude-3-5-haiku-20241022'),
       max_tokens: 1024,
       system: systemPrompt,
-      messages,
+      messages: [{ role: 'user', content: prompt }],
     });
 
     let fullText = '';
