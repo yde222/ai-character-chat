@@ -114,13 +114,22 @@ export class LlmService implements OnModuleInit {
       buffer += chunkText;
 
       if (buffer.length >= 4) {
-        onChunk(buffer, false);
-        buffer = '';
+        // 감정 태그가 버퍼에 부분적으로 포함될 수 있으므로 '[' 이후는 홀드
+        const bracketIdx = buffer.lastIndexOf('[');
+        if (bracketIdx >= 0) {
+          const beforeBracket = buffer.slice(0, bracketIdx);
+          if (beforeBracket) onChunk(beforeBracket, false);
+          buffer = buffer.slice(bracketIdx);
+        } else {
+          onChunk(buffer, false);
+          buffer = '';
+        }
       }
     }
 
     const { emotion } = this.parseEmotion(fullText);
 
+    // 남은 버퍼에서 감정 태그 제거 후 전송
     if (buffer.length > 0) {
       const clean = buffer.replace(/\[EMOTION:\w+\]/g, '').trim();
       if (clean) onChunk(clean, false);
