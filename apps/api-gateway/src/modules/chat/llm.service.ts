@@ -122,8 +122,8 @@ export class LlmService implements OnModuleInit {
       buffer += chunkText;
 
       if (buffer.length >= 4) {
-        // 감정/선택지 태그가 버퍼에 부분적으로 포함될 수 있으므로 '[' 이후는 홀드
-        const bracketIdx = buffer.lastIndexOf('[');
+        // 첫 번째 '[' 이후 전부 홀드 — [EMOTION:...] [CHOICE_P:...] 등 연속 태그 대응
+        const bracketIdx = buffer.indexOf('[');
         if (bracketIdx >= 0) {
           const beforeBracket = buffer.slice(0, bracketIdx);
           if (beforeBracket) onChunk(beforeBracket, false);
@@ -173,7 +173,7 @@ export class LlmService implements OnModuleInit {
       buffer += text;
 
       if (buffer.length >= 4) {
-        const bracketIdx = buffer.lastIndexOf('[');
+        const bracketIdx = buffer.indexOf('[');
         if (bracketIdx >= 0) {
           const beforeBracket = buffer.slice(0, bracketIdx);
           if (beforeBracket) onChunk(beforeBracket, false);
@@ -278,11 +278,13 @@ export class LlmService implements OnModuleInit {
 
   /**
    * 메타 태그 모두 제거 (EMOTION, CHOICE)
+   * 메타 태그는 항상 응답 끝에 위치 → 첫 [EMOTION 또는 [CHOICE 이후 전부 절단
    */
   private stripMetaTags(text: string): string {
-    return text
-      .replace(/\[EMOTION:\w+\]/g, '')
-      .replace(/\[CHOICE_[PND]:.+?\]/g, '')
-      .trim();
+    const metaStart = text.search(/\[EMOTION:|\[CHOICE_/);
+    if (metaStart >= 0) {
+      return text.slice(0, metaStart).trim();
+    }
+    return text.trim();
   }
 }
