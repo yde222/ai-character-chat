@@ -3,6 +3,14 @@ import { ConfigService } from '@nestjs/config';
 import { GoogleGenerativeAI, GenerativeModel, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import Anthropic from '@anthropic-ai/sdk';
 
+export interface LlmChoice {
+  id: string;
+  text: string;
+  emoji: string;
+  effect: 'positive' | 'neutral' | 'negative';
+  affinityHint: string;
+}
+
 /**
  * LLM Service — Gemini Primary + Claude Fallback
  *
@@ -57,7 +65,7 @@ export class LlmService implements OnModuleInit {
     systemPrompt: string,
     userMessage: string,
     recentMessages: { role: string; content: string }[],
-    onChunk: (text: string, isFinal: boolean, emotion?: string) => void,
+    onChunk: (text: string, isFinal: boolean, emotion?: string, choices?: LlmChoice[]) => void,
   ): Promise<void> {
     // Gemini 먼저 시도
     if (this.geminiModel) {
@@ -90,7 +98,7 @@ export class LlmService implements OnModuleInit {
     systemPrompt: string,
     userMessage: string,
     recentMessages: { role: string; content: string }[],
-    onChunk: (text: string, isFinal: boolean, emotion?: string) => void,
+    onChunk: (text: string, isFinal: boolean, emotion?: string, choices?: LlmChoice[]) => void,
   ): Promise<void> {
     const prompt = this.buildPrompt(userMessage, recentMessages);
 
@@ -114,7 +122,7 @@ export class LlmService implements OnModuleInit {
       buffer += chunkText;
 
       if (buffer.length >= 4) {
-        // 감정 태그가 버퍼에 부분적으로 포함될 수 있으므로 '[' 이후는 홀드
+        // 감정/선택지 태그가 버퍼에 부분적으로 포함될 수 있으므로 '[' 이후는 홀드
         const bracketIdx = buffer.lastIndexOf('[');
         if (bracketIdx >= 0) {
           const beforeBracket = buffer.slice(0, bracketIdx);
@@ -127,15 +135,15 @@ export class LlmService implements OnModuleInit {
       }
     }
 
-    const { emotion } = this.parseEmotion(fullText);
+    const { emotion, choices } = this.parseResponse(fullText);
 
-    // 남은 버퍼에서 감정 태그 제거 후 전송
+    // 남은 버퍼에서 메타 태그 제거 후 전송
     if (buffer.length > 0) {
-      const clean = buffer.replace(/\[EMOTION:\w+\]/g, '').trim();
+      const clean = this.stripMetaTags(buffer);
       if (clean) onChunk(clean, false);
     }
 
-    onChunk('', true, emotion);
+    onChunk('', true, emotion, choices);
   }
 
   /**
@@ -145,7 +153,7 @@ export class LlmService implements OnModuleInit {
     systemPrompt: string,
     userMessage: string,
     recentMessages: { role: string; content: string }[],
-    onChunk: (text: string, isFinal: boolean, emotion?: string) => void,
+    onChunk: (text: string, isFinal: boolean, emotion?: string, choices?: LlmChoice[]) => void,
   ): Promise<void> {
     const prompt = this.buildPrompt(userMessage, recentMessages);
 
@@ -165,22 +173,29 @@ export class LlmService implements OnModuleInit {
       buffer += text;
 
       if (buffer.length >= 4) {
-        onChunk(buffer, false);
-        buffer = '';
+        const bracketIdx = buffer.lastIndexOf('[');
+        if (bracketIdx >= 0) {
+          const beforeBracket = buffer.slice(0, bracketIdx);
+          if (beforeBracket) onChunk(beforeBracket, false);
+          buffer = buffer.slice(bracketIdx);
+        } else {
+          onChunk(buffer, false);
+          buffer = '';
+        }
       }
     });
 
     // 스트림 완료 대기
     await stream.finalMessage();
 
-    const { emotion } = this.parseEmotion(fullText);
+    const { emotion, choices } = this.parseResponse(fullText);
 
     if (buffer.length > 0) {
-      const clean = buffer.replace(/\[EMOTION:\w+\]/g, '').trim();
+      const clean = this.stripMetaTags(buffer);
       if (clean) onChunk(clean, false);
     }
 
-    onChunk('', true, emotion);
+    onChunk('', true, emotion, choices);
   }
 
   private buildPrompt(
@@ -205,16 +220,69 @@ export class LlmService implements OnModuleInit {
       '\n3. 유저의 말에 반응하고, 대화를 이어가는 요소를 포함하세요.' +
       '\n4. 감정은 대사와 행동으로 자연스럽게 드러내세요.' +
       '\n5. 응답 마지막 줄에 [EMOTION:태그명] 형식으로 감정을 표시하세요.' +
-      '\n   가능한 태그: NEUTRAL, JOY, SADNESS, ANGER, SURPRISE, AFFECTION, FEAR, DISGUST, EXCITEMENT, SHY',
+      '\n   가능한 태그: NEUTRAL, JOY, SADNESS, ANGER, SURPRISE, AFFECTION, FEAR, DISGUST, EXCITEMENT, SHY' +
+      '\n6. 감정 태그 다음 줄에, 유저가 선택할 수 있는 답변 3개를 아래 형식으로 제시하세요.' +
+      '\n   반드시 현재 대화 흐름과 캐릭터의 마지막 말에 어울리는 자연스러운 유저 대사를 만드세요.' +
+      '\n   [CHOICE_P:이모지|호감이 오르는 긍정적 답변]' +
+      '\n   [CHOICE_N:이모지|무난한 중립적 답변]' +
+      '\n   [CHOICE_D:이모지|호감이 내려가는 부정적 답변]',
     );
 
     return parts.join('\n');
   }
 
-  private parseEmotion(text: string): { content: string; emotion: string } {
-    const match = text.match(/\[EMOTION:(\w+)\]/);
-    const emotion = match ? match[1].toUpperCase() : 'NEUTRAL';
-    const content = text.replace(/\[EMOTION:\w+\]/g, '').trim();
-    return { content, emotion };
+  /**
+   * 전체 응답에서 감정 태그 + 선택지 파싱
+   */
+  private parseResponse(text: string): { content: string; emotion: string; choices: LlmChoice[] } {
+    // 감정 파싱
+    const emotionMatch = text.match(/\[EMOTION:(\w+)\]/);
+    const emotion = emotionMatch ? emotionMatch[1].toUpperCase() : 'NEUTRAL';
+
+    // 선택지 파싱
+    const choices: LlmChoice[] = [];
+    const choiceRegex = /\[CHOICE_(P|N|D):(.+?)\|(.+?)\]/g;
+    let match: RegExpExecArray | null;
+    const effectMap: Record<string, 'positive' | 'neutral' | 'negative'> = {
+      P: 'positive',
+      N: 'neutral',
+      D: 'negative',
+    };
+    const hintMap: Record<string, string> = {
+      P: '호감 UP',
+      N: '',
+      D: '호감 DOWN',
+    };
+
+    while ((match = choiceRegex.exec(text)) !== null) {
+      const type = match[1]; // P, N, D
+      const emoji = match[2].trim();
+      const choiceText = match[3].trim();
+      choices.push({
+        id: `${type.toLowerCase()}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        text: choiceText,
+        emoji,
+        effect: effectMap[type] || 'neutral',
+        affinityHint: hintMap[type] || '',
+      });
+    }
+
+    // 선택지가 파싱 안 됐으면 fallback (LLM이 형식을 안 따랐을 때)
+    if (choices.length === 0) {
+      this.logger.warn('LLM did not generate choices in expected format, using emotion-based fallback');
+    }
+
+    const content = this.stripMetaTags(text);
+    return { content, emotion, choices };
+  }
+
+  /**
+   * 메타 태그 모두 제거 (EMOTION, CHOICE)
+   */
+  private stripMetaTags(text: string): string {
+    return text
+      .replace(/\[EMOTION:\w+\]/g, '')
+      .replace(/\[CHOICE_[PND]:.+?\]/g, '')
+      .trim();
   }
 }

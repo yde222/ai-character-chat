@@ -9,7 +9,7 @@ import {
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
-import { LlmService } from '../modules/chat/llm.service';
+import { LlmService, LlmChoice } from '../modules/chat/llm.service';
 
 /**
  * ChatGateway — MVP 통합 버전
@@ -141,19 +141,27 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // LLM 스트리밍 호출
       let chunkIndex = 0;
+      let fullContent = '';
       await this.llmService.generateStream(
         systemPrompt,
         data.message,
         recentMessages,
-        (text: string, isFinal: boolean, emotion?: string) => {
+        (text: string, isFinal: boolean, emotion?: string, choices?: LlmChoice[]) => {
           if (isFinal) {
+            // AI 응답을 세션 히스토리에 저장
+            if (fullContent) {
+              session.messages.push({ role: 'assistant', content: fullContent });
+            }
+
             client.emit('chat_chunk', {
               chunkId: `${session.sessionId}_${chunkIndex++}`,
               content: '',
               isFinal: true,
               emotion: emotion || 'NEUTRAL',
+              choices: choices && choices.length > 0 ? choices : undefined,
             });
           } else {
+            fullContent += text;
             client.emit('chat_chunk', {
               chunkId: `${session.sessionId}_${chunkIndex++}`,
               content: text,
@@ -162,11 +170,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
           }
         },
       );
-
-      // AI 응답을 세션 히스토리에 추가
-      const fullContent = session.messages
-        .filter(m => m.role === 'user')
-        .length > 0 ? '' : ''; // 스트리밍이라 fullContent는 별도 추적 필요
 
       const latencyMs = Date.now() - startTime;
       this.logger.log(`Message processed in ${latencyMs}ms`);
