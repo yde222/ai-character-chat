@@ -43,22 +43,33 @@ const entities = [
 
         // PostgreSQL 모드 — DB_TYPE=postgres 설정 시
         if (dbType === 'postgres') {
+          const databaseUrl = config.get<string>('DATABASE_URL');
+          const baseConfig = {
+            type: 'postgres' as const,
+            entities,
+            synchronize: config.get('NODE_ENV') !== 'production',
+            logging: config.get('DB_LOGGING') === 'true',
+            extra: {
+              max: config.get<number>('DB_POOL_SIZE', 10),
+              idleTimeoutMillis: 30000,
+              connectionTimeoutMillis: 5000,
+              // Neon serverless requires SSL
+              ssl: databaseUrl?.includes('neon.tech') ? { rejectUnauthorized: false } : false,
+            },
+          };
+
+          // DATABASE_URL 우선 (Neon/prod), 없으면 개별 환경변수 사용
+          if (databaseUrl) {
+            return { ...baseConfig, url: databaseUrl };
+          }
+
           return {
-            type: 'postgres',
+            ...baseConfig,
             host: config.get('DB_HOST', 'localhost'),
             port: config.get<number>('DB_PORT', 5432),
             username: config.get('DB_USERNAME', 'aichat'),
             password: config.get('DB_PASSWORD', 'aichat_dev'),
             database: config.get('DB_DATABASE', 'ai_character_chat'),
-            entities,
-            synchronize: config.get('NODE_ENV') !== 'production', // 프로덕션에서는 migration 사용
-            logging: config.get('DB_LOGGING') === 'true',
-            // 커넥션 풀 — 동시 접속 처리
-            extra: {
-              max: config.get<number>('DB_POOL_SIZE', 10),
-              idleTimeoutMillis: 30000,
-              connectionTimeoutMillis: 5000,
-            },
           };
         }
 

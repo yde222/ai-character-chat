@@ -1,0 +1,30 @@
+# Image Service — gRPC (private networking only)
+app = 'ai-char-image'
+primary_region = 'nrt'
+
+[build]
+  dockerfile = '../Dockerfile'
+  [build.args]
+    SERVICE = 'image-service'
+
+[env]
+  NODE_ENV          = 'production'
+  IMAGE_SERVICE_URL = '0.0.0.0:50052'
+  DB_TYPE           = 'postgres'
+
+# Secrets: DATABASE_URL, REDIS_HOST, REDIS_PORT
+
+[[services]]
+  protocol      = 'tcp'
+  internal_port = 50052
+
+[checks]
+  [checks.alive]
+    type     = 'tcp'
+    port     = 50052
+    interval = '15s'
+    timeout  = '5s'
+
+[vm]
+  size   = 'shared-cpu-1x'
+  memory = '256mb'

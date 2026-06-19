@@ -1,0 +1,50 @@
+# API Gateway — public HTTP + WebSocket endpoint
+app = 'ai-char-api-gateway'
+primary_region = 'nrt'
+
+[build]
+  dockerfile = '../Dockerfile'
+  [build.args]
+    SERVICE = 'api-gateway'
+
+[env]
+  NODE_ENV      = 'production'
+  PORT          = '3000'
+  # Fly private networking: appname.internal
+  CHAT_SERVICE_URL  = 'ai-char-chat.internal:50051'
+  IMAGE_SERVICE_URL = 'ai-char-image.internal:50052'
+  EVENT_SERVICE_URL = 'http://ai-char-event.internal:3002'
+  DB_TYPE = 'postgres'
+
+# Secrets set via: flyctl secrets set KEY=value --app ai-char-api-gateway
+# JWT_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_CALLBACK_URL
+# KAKAO_CLIENT_ID, KAKAO_CLIENT_SECRET, KAKAO_CALLBACK_URL
+# DATABASE_URL, REDIS_URL, CLIENT_REDIRECT_URL
+
+[[services]]
+  protocol      = 'tcp'
+  internal_port = 3000
+
+  [[services.ports]]
+    port     = 80
+    handlers = ['http']
+
+  [[services.ports]]
+    port     = 443
+    handlers = ['tls', 'http']
+
+  [services.concurrency]
+    type       = 'requests'
+    soft_limit = 100
+    hard_limit = 200
+
+  [[services.http_checks]]
+    interval     = '15s'
+    timeout      = '5s'
+    grace_period = '30s'
+    method       = 'GET'
+    path         = '/health'
+
+[vm]
+  size   = 'shared-cpu-1x'
+  memory = '256mb'

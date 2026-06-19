@@ -1,0 +1,24 @@
+# Event Service — HTTP (private networking only)
+app = 'ai-char-event'
+primary_region = 'nrt'
+
+[build]
+  dockerfile = '../Dockerfile'
+  [build.args]
+    SERVICE = 'event-service'
+
+[env]
+  NODE_ENV           = 'production'
+  EVENT_SERVICE_PORT = '3002'
+  PORT               = '3002'
+  DB_TYPE            = 'postgres'
+
+# Secrets: DATABASE_URL
+
+[[services]]
+  protocol      = 'tcp'
+  internal_port = 3002
+
+[vm]
+  size   = 'shared-cpu-1x'
+  memory = '256mb'

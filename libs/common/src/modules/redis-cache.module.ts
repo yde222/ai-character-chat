@@ -33,14 +33,16 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
         const redisHost = config.get<string>('REDIS_HOST');
 
         if (redisHost) {
-          // Redis 모드
+          // Redis 모드 (Upstash 포함 — password + TLS 지원)
           const { redisStore } = await import('cache-manager-ioredis-yet');
+          const redisPassword = config.get<string>('REDIS_PASSWORD');
           return {
             store: redisStore,
             host: redisHost,
             port: config.get<number>('REDIS_PORT', 6379),
-            ttl: 300, // 기본 TTL 5분 (초 단위)
-            max: 1000, // 최대 캐시 항목 수
+            ...(redisPassword ? { password: redisPassword, tls: {} } : {}),
+            ttl: 300,
+            max: 1000,
           };
         }
 
