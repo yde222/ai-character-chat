@@ -66,11 +66,12 @@ export class LlmService implements OnModuleInit {
     userMessage: string,
     recentMessages: { role: string; content: string }[],
     onChunk: (text: string, isFinal: boolean, emotion?: string, choices?: LlmChoice[]) => void,
+    characterName?: string,
   ): Promise<void> {
     // Gemini 먼저 시도
     if (this.geminiModel) {
       try {
-        await this.generateWithGemini(systemPrompt, userMessage, recentMessages, onChunk);
+        await this.generateWithGemini(systemPrompt, userMessage, recentMessages, onChunk, characterName);
         return;
       } catch (error) {
         this.logger.warn(`Gemini failed (${error.message?.slice(0, 80)}), trying Claude fallback...`);
@@ -80,7 +81,7 @@ export class LlmService implements OnModuleInit {
     // Claude fallback
     if (this.anthropic) {
       try {
-        await this.generateWithClaude(systemPrompt, userMessage, recentMessages, onChunk);
+        await this.generateWithClaude(systemPrompt, userMessage, recentMessages, onChunk, characterName);
         return;
       } catch (error) {
         this.logger.error(`Claude also failed: ${error.message}`);
@@ -99,8 +100,9 @@ export class LlmService implements OnModuleInit {
     userMessage: string,
     recentMessages: { role: string; content: string }[],
     onChunk: (text: string, isFinal: boolean, emotion?: string, choices?: LlmChoice[]) => void,
+    characterName?: string,
   ): Promise<void> {
-    const prompt = this.buildPrompt(userMessage, recentMessages);
+    const prompt = this.buildPrompt(userMessage, recentMessages, characterName);
 
     const result = await this.geminiModel!.generateContentStream({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -154,8 +156,9 @@ export class LlmService implements OnModuleInit {
     userMessage: string,
     recentMessages: { role: string; content: string }[],
     onChunk: (text: string, isFinal: boolean, emotion?: string, choices?: LlmChoice[]) => void,
+    characterName?: string,
   ): Promise<void> {
-    const prompt = this.buildPrompt(userMessage, recentMessages);
+    const prompt = this.buildPrompt(userMessage, recentMessages, characterName);
 
     // 단일 user 메시지로 전송 (대화 히스토리는 prompt 안에 포함됨)
     const stream = this.anthropic!.messages.stream({
@@ -201,8 +204,13 @@ export class LlmService implements OnModuleInit {
   private buildPrompt(
     userMessage: string,
     recentMessages: { role: string; content: string }[],
+    characterName?: string,
   ): string {
     const parts: string[] = [];
+
+    if (characterName) {
+      parts.push(`[역할 확인: 당신은 반드시 ${characterName}입니다. 절대 다른 이름을 사용하지 마세요.]`);
+    }
 
     if (recentMessages.length > 0) {
       parts.push('[최근 대화]');
@@ -215,7 +223,7 @@ export class LlmService implements OnModuleInit {
     parts.push(`\n유저: ${userMessage}`);
     parts.push(
       '\n[응답 지시]' +
-      '\n1. 위 대화에 이어서 캐릭터로서 자연스럽게 응답하세요.' +
+      `\n1. 위 대화에 이어서 ${characterName ? characterName + '으로서' : '캐릭터로서'} 자연스럽게 응답하세요.` +
       '\n2. 응답 길이: 1~3문장.' +
       '\n3. 유저의 말에 반응하고, 대화를 이어가는 요소를 포함하세요.' +
       '\n4. 감정은 대사와 행동으로 자연스럽게 드러내세요.' +

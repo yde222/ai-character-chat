@@ -133,6 +133,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const systemPrompt = CHARACTER_PROMPTS[session.characterId]
         || `당신은 AI 캐릭터입니다. 자연스럽고 매력적으로 대화하세요.`;
 
+      // 캐릭터 이름 추출 (시스템 프롬프트에서 "이름"입니다 패턴 파싱)
+      const nameMatch = systemPrompt.match(/"([^"]+)"입니다/);
+      const characterName = nameMatch ? nameMatch[1] : undefined;
+
       // 최근 메시지 (최대 10턴)
       const recentMessages = session.messages.slice(-10);
 
@@ -169,6 +173,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             });
           }
         },
+        characterName,
       );
 
       const latencyMs = Date.now() - startTime;
