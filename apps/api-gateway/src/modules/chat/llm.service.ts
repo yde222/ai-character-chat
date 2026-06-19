@@ -206,37 +206,40 @@ export class LlmService implements OnModuleInit {
     recentMessages: { role: string; content: string }[],
     characterName?: string,
   ): string {
-    const parts: string[] = [];
+    const charLabel = characterName || '캐릭터';
+    const lines: string[] = [];
 
+    // 역할 + 응답 지시를 먼저 배치
     if (characterName) {
-      parts.push(`[역할 확인: 당신은 반드시 ${characterName}입니다. 절대 다른 이름을 사용하지 마세요.]`);
+      lines.push(`[역할: 당신은 ${characterName}입니다. 절대 다른 이름이나 캐릭터가 되지 마세요.]`);
     }
+    lines.push(
+      `[지시사항]`,
+      `- 아래 대화에서 유저(상대방)의 마지막 말에 ${charLabel}(당신)로서 응답하세요.`,
+      `- 유저와 ${charLabel}를 혼동하지 마세요. 유저가 한 말을 ${charLabel}가 한 것처럼 응답하지 마세요.`,
+      `- 응답 길이: 1~3문장.`,
+      `- 감정은 대사와 행동으로 자연스럽게 드러내세요.`,
+      `- 응답 마지막 줄: [EMOTION:태그] (NEUTRAL/JOY/SADNESS/ANGER/SURPRISE/AFFECTION/FEAR/DISGUST/EXCITEMENT/SHY 중 하나)`,
+      `- 감정 태그 다음 줄에 유저 선택지 3개:`,
+      `  [CHOICE_P:이모지|긍정적 유저 답변]`,
+      `  [CHOICE_N:이모지|중립적 유저 답변]`,
+      `  [CHOICE_D:이모지|부정적 유저 답변]`,
+      ``,
+    );
 
+    // 대화 히스토리
     if (recentMessages.length > 0) {
-      parts.push('[최근 대화]');
+      lines.push('[대화 기록]');
       for (const msg of recentMessages) {
-        const role = msg.role === 'user' ? '유저' : '캐릭터';
-        parts.push(`${role}: ${msg.content}`);
+        const role = msg.role === 'user' ? '유저' : charLabel;
+        lines.push(`${role}: ${msg.content}`);
       }
     }
 
-    parts.push(`\n유저: ${userMessage}`);
-    parts.push(
-      '\n[응답 지시]' +
-      `\n1. 위 대화에 이어서 ${characterName ? characterName + '으로서' : '캐릭터로서'} 자연스럽게 응답하세요.` +
-      '\n2. 응답 길이: 1~3문장.' +
-      '\n3. 유저의 말에 반응하고, 대화를 이어가는 요소를 포함하세요.' +
-      '\n4. 감정은 대사와 행동으로 자연스럽게 드러내세요.' +
-      '\n5. 응답 마지막 줄에 [EMOTION:태그명] 형식으로 감정을 표시하세요.' +
-      '\n   가능한 태그: NEUTRAL, JOY, SADNESS, ANGER, SURPRISE, AFFECTION, FEAR, DISGUST, EXCITEMENT, SHY' +
-      '\n6. 감정 태그 다음 줄에, 유저가 선택할 수 있는 답변 3개를 아래 형식으로 제시하세요.' +
-      '\n   반드시 현재 대화 흐름과 캐릭터의 마지막 말에 어울리는 자연스러운 유저 대사를 만드세요.' +
-      '\n   [CHOICE_P:이모지|호감이 오르는 긍정적 답변]' +
-      '\n   [CHOICE_N:이모지|무난한 중립적 답변]' +
-      '\n   [CHOICE_D:이모지|호감이 내려가는 부정적 답변]',
-    );
+    lines.push(`유저: ${userMessage}`);
+    lines.push(`${charLabel}:`);
 
-    return parts.join('\n');
+    return lines.join('\n');
   }
 
   /**
