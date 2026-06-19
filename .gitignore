@@ -53,3 +53,4 @@ temp/
 *.p12
 credentials.json
 service-account.json
+.env.fly
