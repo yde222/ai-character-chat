@@ -63,13 +63,13 @@ ENV SERVICE_NAME=${SERVICE}
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nestjs
 
-# 프로덕션 의존성만 복사
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/package.json ./package.json
+# 프로덕션 의존성만 복사 (nestjs 유저 소유로 설정)
+COPY --from=deps --chown=nestjs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
+COPY --from=builder --chown=nestjs:nodejs /app/package.json ./package.json
 
-# proto 파일 복사 (gRPC 서비스에 필요)
-COPY libs/proto/ libs/proto/
+# proto 파일 복사 (gRPC 서비스에 필요, nestjs 유저 읽기 권한 필요)
+COPY --chown=nestjs:nodejs libs/proto/ libs/proto/
 
 # 유저 전환
 USER nestjs
