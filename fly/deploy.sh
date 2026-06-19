@@ -140,16 +140,16 @@ echo "🔥 Step 3: 서비스 배포"
 cd "$ROOT"
 
 echo "  → chat-service 배포..."
-$FLY deploy --config fly/chat-service.toml --region $REGION --wait-timeout 300
+$FLY deploy --config fly/chat-service.toml --wait-timeout 300 --ha=false
 
 echo "  → image-service 배포..."
-$FLY deploy --config fly/image-service.toml --region $REGION --wait-timeout 300
+$FLY deploy --config fly/image-service.toml --wait-timeout 300 --ha=false
 
 echo "  → event-service 배포..."
-$FLY deploy --config fly/event-service.toml --region $REGION --wait-timeout 300
+$FLY deploy --config fly/event-service.toml --wait-timeout 300 --ha=false
 
 echo "  → api-gateway 배포..."
-$FLY deploy --config fly/api-gateway.toml --region $REGION --wait-timeout 300
+$FLY deploy --config fly/api-gateway.toml --wait-timeout 300 --ha=false
 
 # ── 완료 ──────────────────────────────────────────────────
 echo ""
